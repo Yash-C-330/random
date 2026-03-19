@@ -416,7 +416,7 @@ SELECT
     MAX(updated_at)                         AS last_activity
 FROM public.agent_messages
 GROUP BY agent;
-
+drop view vw_task_performance
 -- ─── Task Performance View ──────────────────────────────────
 CREATE OR REPLACE VIEW public.vw_task_performance AS
 SELECT 
@@ -463,7 +463,7 @@ GROUP BY am.task_id, am.agent;
 -- ============================================================
 -- MIGRATION SQL (for existing databases)
 -- ============================================================
--- ALTER TABLE public.agent_messages ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
+-- ALTER TABLE public.agent_messages ADD COLUMN IF NOT EXISTS agent text NOT NULL;
 -- ALTER TABLE public.agent_messages ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 -- ALTER TABLE public.agent_messages ADD COLUMN IF NOT EXISTS max_attempts int NOT NULL DEFAULT 3;
 --
