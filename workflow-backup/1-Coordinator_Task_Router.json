@@ -1,4 +1,4 @@
-{
+﻿{
     "id":  "wf-coordinator",
     "name":  "Coordinator (Task Router)",
     "active":  false,
@@ -26,9 +26,7 @@
                                          "triggerTimes":  {
                                                               "item":  [
                                                                            {
-                                                                               "mode":  "interval",
-                                                                               "value":  5,
-                                                                               "unit":  "minutes"
+                                                                               "mode":  "everyMinute"
                                                                            }
                                                                        ]
                                                           }
