@@ -1,0 +1,628 @@
+openapi: 3.0.3
+info:
+  title: Multi-Agent Research System API
+  description: |
+    SaaS API endpoints exposed via n8n webhooks for the multi-agent
+    social-platform research system. Authenticate every request with
+    the `x-api-key` header matching `SAAS_API_KEY` in your environment.
+  version: 1.0.0
+  contact:
+    name: System Administrator
+
+servers:
+  - url: https://your-n8n-host.example.com/webhook
+    description: Production n8n webhook base (self-hosted; update to your domain)
+  - url: http://localhost:5678/webhook
+    description: Local development
+
+# ─── Security ────────────────────────────────────────────────
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  schemas:
+
+    # ── Common ──────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: unauthorized
+        message:
+          type: string
+          example: Missing or invalid x-api-key header.
+
+    DateRange:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date
+          example: "2026-02-01"
+        end:
+          type: string
+          format: date
+          example: "2026-03-19"
+
+    PlatformEnum:
+      type: string
+      enum: [youtube, twitter, tiktok, reddit, meta_ads]
+
+    AgentStateEnum:
+      type: string
+      enum: [idle, busy, waiting, error]
+
+    MessageStateEnum:
+      type: string
+      enum: [queued, claimed, in_progress, done, blocked, failed]
+
+    MessageKindEnum:
+      type: string
+      enum: [task, ask, answer, tool, log, error]
+
+    # ── Tasks ───────────────────────────────────────────────
+    TaskCreateRequest:
+      type: object
+      required: [queries, platforms]
+      properties:
+        queries:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 20
+          description: Search queries or keywords to research.
+          example: ["AI skincare", "anti-aging serum ads"]
+        competitors:
+          type: array
+          items:
+            type: string
+          description: Competitor brand names to track specifically.
+          example: ["BrandX", "BrandY"]
+        platforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformEnum'
+          minItems: 1
+          example: ["youtube", "tiktok", "reddit"]
+        date_range:
+          $ref: '#/components/schemas/DateRange'
+        max_items:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+          description: Maximum items to ingest per platform per query.
+        language:
+          type: string
+          default: en
+          description: BCP-47 language code filter (best-effort).
+          example: en
+        notify_webhook:
+          type: string
+          format: uri
+          description: Optional URL to POST a completion notification to.
+          example: https://yourapp.example.com/hooks/research-done
+
+    TaskCreateResponse:
+      type: object
+      required: [task_id, status, created_at]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: queued
+        created_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+          example: Multi-agent job queued. Poll /v1/tasks/{task_id}/status for progress.
+
+    AgentProgress:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          state:
+            $ref: '#/components/schemas/AgentStateEnum'
+          items_processed:
+            type: integer
+          last_error:
+            type: string
+            nullable: true
+          updated_at:
+            type: string
+            format: date-time
+
+    TaskStatusResponse:
+      type: object
+      required: [task_id, status]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, done, failed, cancelled]
+        progress:
+          $ref: '#/components/schemas/AgentProgress'
+        raw_items_ingested:
+          type: integer
+        analyses_complete:
+          type: integer
+        report_ready:
+          type: boolean
+        last_error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Reports ─────────────────────────────────────────────
+    ReportResponse:
+      type: object
+      required: [task_id, status]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [draft, final, failed]
+        title:
+          type: string
+        markdown:
+          type: string
+          description: Full Markdown report text.
+        html:
+          type: string
+          description: HTML-rendered report.
+        json_summary:
+          type: object
+          description: Structured JSON summary with key insights.
+          properties:
+            top_trends:
+              type: array
+              items:
+                type: string
+            whitespace_opportunities:
+              type: array
+              items:
+                type: string
+            top_performers:
+              type: array
+              items:
+                type: object
+            compliance_alerts:
+              type: array
+              items:
+                type: string
+        notion_page_id:
+          type: string
+          nullable: true
+        notion_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Agent Introspection ─────────────────────────────────
+    AgentThread:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        topic:
+          type: string
+        status:
+          type: string
+          enum: [open, closing, closed]
+        owner_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AgentMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        from_agent:
+          type: string
+        to_agent:
+          type: string
+        kind:
+          $ref: '#/components/schemas/MessageKindEnum'
+        priority:
+          type: integer
+        state:
+          $ref: '#/components/schemas/MessageStateEnum'
+        attempts:
+          type: integer
+        payload:
+          type: object
+        expected_schema:
+          type: object
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+security:
+  - ApiKeyAuth: []
+
+# ─── Paths ───────────────────────────────────────────────────
+paths:
+
+  /v1/tasks/research:
+    post:
+      operationId: createResearchTask
+      summary: Start a multi-agent research job
+      description: |
+        Queues a new research job. The Coordinator Agent picks it up within
+        `COORDINATOR_POLL_INTERVAL_SECONDS` and fans out tasks to ingestion
+        agents, then to analysis agents, and finally to the Report Writer.
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+            example:
+              queries: ["AI skincare serum", "anti-aging ad hooks 2026"]
+              competitors: ["OlayPro", "NeutrogenaPlus"]
+              platforms: ["youtube", "tiktok", "reddit"]
+              date_range:
+                start: "2026-01-01"
+                end: "2026-03-19"
+              max_items: 50
+              language: en
+              notify_webhook: "https://yourapp.example.com/hooks/done"
+      responses:
+        '202':
+          description: Job accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreateResponse'
+              example:
+                task_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                status: queued
+                created_at: "2026-03-19T10:00:00Z"
+                message: "Multi-agent job queued. Poll /v1/tasks/{task_id}/status for progress."
+        '400':
+          description: Invalid request payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/tasks/{task_id}/status:
+    get:
+      operationId: getTaskStatus
+      summary: Get task progress and agent states
+      tags: [Tasks]
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      responses:
+        '200':
+          description: Task status and per-agent progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskStatusResponse'
+              example:
+                task_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                status: running
+                raw_items_ingested: 87
+                analyses_complete: 42
+                report_ready: false
+                progress:
+                  youtube_ingestion:
+                    state: done
+                    items_processed: 50
+                    last_error: null
+                    updated_at: "2026-03-19T10:05:00Z"
+                  creative_analyst:
+                    state: busy
+                    items_processed: 32
+                    last_error: null
+                    updated_at: "2026-03-19T10:08:00Z"
+                created_at: "2026-03-19T10:00:00Z"
+                updated_at: "2026-03-19T10:08:30Z"
+        '404':
+          description: Task not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/reports/{task_id}:
+    get:
+      operationId: getReportByTaskId
+      summary: Fetch the completed report for a task
+      tags: [Reports]
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, summary]
+            default: full
+          description: |
+            `full` returns markdown + html + json_summary.
+            `summary` returns only json_summary and Notion URL.
+      responses:
+        '200':
+          description: Report data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '202':
+          description: Report not yet ready; task still running.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Report not yet available. Task status: running"
+                  task_status:
+                    type: string
+        '404':
+          description: Task not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/reports/latest:
+    get:
+      operationId: getLatestReport
+      summary: Fetch the most recently completed report
+      tags: [Reports]
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, summary]
+            default: summary
+      responses:
+        '200':
+          description: Latest completed report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '404':
+          description: No completed reports found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/agents/threads:
+    get:
+      operationId: listAgentThreads
+      summary: List agent collaboration threads (introspection)
+      description: |
+        Returns threads for a given task. Useful for debugging agent
+        collaboration and message state. This endpoint is optional and
+        should be protected or disabled in production.
+      tags: [Agent Introspection]
+      parameters:
+        - name: task_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter threads by task ID.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, closing, closed]
+          description: Filter by thread status.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of agent threads.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  threads:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentThread'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/agents/threads/{thread_id}/messages:
+    get:
+      operationId: getThreadMessages
+      summary: Get all messages in an agent thread
+      description: |
+        Returns the full message history for a thread including payloads,
+        state, and error details. Useful for debugging stuck messages.
+      tags: [Agent Introspection]
+      parameters:
+        - name: thread_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/MessageKindEnum'
+          description: Filter by message kind.
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/MessageStateEnum'
+          description: Filter by message state.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Thread messages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thread_id:
+                    type: string
+                    format: uuid
+                  total:
+                    type: integer
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentMessage'
+        '404':
+          description: Thread not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+tags:
+  - name: Tasks
+    description: Start and monitor research jobs.
+  - name: Reports
+    description: Fetch generated reports (Markdown, HTML, JSON, Notion link).
+  - name: Agent Introspection
+    description: |
+      Debug endpoints for inspecting agent collaboration threads and messages.
+      Recommended to restrict access to internal networks or disable in production.
