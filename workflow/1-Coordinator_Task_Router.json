@@ -1,0 +1,230 @@
+﻿{
+    "id":  "wf-coordinator",
+    "name":  "Coordinator (Task Router)",
+    "active":  false,
+    "settings":  {
+                     "executionOrder":  "v1"
+                 },
+    "versionId":  "v-wf-coordinator",
+    "pinData":  {
+
+                },
+    "tags":  [
+
+             ],
+    "nodes":  [
+                  {
+                      "id":  "cron",
+                      "name":  "Cron Trigger",
+                      "type":  "n8n-nodes-base.cron",
+                      "typeVersion":  1,
+                      "position":  [
+                                       120,
+                                       200
+                                   ],
+                      "parameters":  {
+                                         "triggerTimes":  {
+                                                              "item":  [
+                                                                           {
+                                                                               "mode":  "everyMinute"
+                                                                           }
+                                                                       ]
+                                                          }
+                                     }
+                  },
+                  {
+                      "id":  "webhook",
+                      "name":  "Webhook Trigger",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       360
+                                   ],
+                      "parameters":  {
+                                         "path":  "coordinator/trigger",
+                                         "httpMethod":  "POST",
+                                         "responseMode":  "onReceived",
+                                         "responseData":  "allEntries"
+                                     }
+                  },
+                  {
+                      "id":  "merge",
+                      "name":  "Merge Trigger",
+                      "type":  "n8n-nodes-base.merge",
+                      "typeVersion":  3,
+                      "position":  [
+                                       320,
+                                       280
+                                   ],
+                      "parameters":  {
+                                         "mode":  "append"
+                                     }
+                  },
+                  {
+                      "id":  "claimTask",
+                      "name":  "Claim Task",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       520,
+                                       280
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE public.tasks SET status=\u0027running\u0027, updated_at=now() WHERE id=(SELECT id FROM public.tasks WHERE status=\u0027queued\u0027 ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "ifTask",
+                      "name":  "Task Claimed?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       720,
+                                       280
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "string":  [
+                                                                           {
+                                                                               "value1":  "={{$json.id}}",
+                                                                               "operation":  "isNotEmpty"
+                                                                           }
+                                                                       ]
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "createThread",
+                      "name":  "Create Thread",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       920,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.agent_threads(task_id, topic, status, owner_agent) VALUES ({{.id}}, \u0027research\u0027, \u0027open\u0027, \u0027coordinator\u0027) RETURNING *;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "dispatch",
+                      "name":  "Dispatch Messages",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.agent_messages(thread_id, task_id, from_agent, to_agent, kind, state, priority, payload)\r\nVALUES\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027youtube_ingestion\u0027, \u0027task\u0027, \u0027queued\u0027, 3, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027twitter_ingestion\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027tiktok_ingestion\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027reddit_ingestion\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027meta_ads_ingestion\u0027, \u0027task\u0027, \u0027queued\u0027, 1, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027enrichment\u0027, \u0027task\u0027, \u0027queued\u0027, 3, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027creative_analyst\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027audience_persona\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027compliance_risk\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027performance_scoring\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027synthesis_insights\u0027, \u0027task\u0027, \u0027queued\u0027, 2, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027report_writer\u0027, \u0027task\u0027, \u0027queued\u0027, 1, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027qa_validator\u0027, \u0027task\u0027, \u0027queued\u0027, 1, {{}}),\r\n({{.id}}, {{.task_id || .id}}, \u0027coordinator\u0027, \u0027notifier\u0027, \u0027task\u0027, \u0027queued\u0027, 1, {{}});"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "logIdle",
+                      "name":  "Log Idle",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       920,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.logs(level, agent, message, meta) VALUES (\u0027debug\u0027,\u0027coordinator\u0027,\u0027no queued task\u0027,\u0027{}\u0027::jsonb);"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Cron Trigger":  {
+                                             "main":  [
+                                                          {
+                                                              "node":  "Merge Trigger",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                         },
+                        "Merge Trigger":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Claim Task",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Claim Task":  {
+                                           "main":  [
+                                                        {
+                                                            "node":  "Task Claimed?",
+                                                            "type":  "main",
+                                                            "index":  0
+                                                        }
+                                                    ]
+                                       },
+                        "Create Thread":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Dispatch Messages",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Webhook Trigger":  {
+                                                "main":  [
+                                                             {
+                                                                 "node":  "Merge Trigger",
+                                                                 "type":  "main",
+                                                                 "index":  1
+                                                             }
+                                                         ]
+                                            },
+                        "Task Claimed?":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Create Thread",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ],
+                                                           [
+                                                               {
+                                                                   "node":  "Log Idle",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          }
+                    }
+}

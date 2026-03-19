@@ -1,0 +1,566 @@
+﻿{
+    "id":  "wf-saas-api",
+    "name":  "SaaS API Workflow",
+    "active":  false,
+    "settings":  {
+                     "executionOrder":  "v1"
+                 },
+    "versionId":  "v-wf-saas-api",
+    "pinData":  {
+
+                },
+    "tags":  [
+
+             ],
+    "nodes":  [
+                  {
+                      "id":  "w1",
+                      "name":  "POST /v1/tasks/research",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       120
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/tasks/research",
+                                         "httpMethod":  "POST",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "w2",
+                      "name":  "GET /v1/tasks/:task_id/status",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       240
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/tasks/:task_id/status",
+                                         "httpMethod":  "GET",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "w3",
+                      "name":  "GET /v1/reports/:task_id",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       360
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/reports/:task_id",
+                                         "httpMethod":  "GET",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "w4",
+                      "name":  "GET /v1/reports/latest",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       480
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/reports/latest",
+                                         "httpMethod":  "GET",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "w5",
+                      "name":  "GET /v1/agents/threads",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       600
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/agents/threads",
+                                         "httpMethod":  "GET",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "w6",
+                      "name":  "GET /v1/agents/threads/:thread_id/messages",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       720
+                                   ],
+                      "parameters":  {
+                                         "path":  "v1/agents/threads/:thread_id/messages",
+                                         "httpMethod":  "GET",
+                                         "responseMode":  "responseNode"
+                                     }
+                  },
+                  {
+                      "id":  "merge",
+                      "name":  "Merge Webhooks",
+                      "type":  "n8n-nodes-base.merge",
+                      "typeVersion":  3,
+                      "position":  [
+                                       360,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "mode":  "append"
+                                     }
+                  },
+                  {
+                      "id":  "auth",
+                      "name":  "Validate API Key",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       560,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "const inKey = $json.headers?.[\"x-api-key\"] || $json.headers?.[\"X-API-KEY\"]; const ok = inKey \u0026\u0026 inKey === $env.SAAS_API_KEY; return [{ json: { ...$json, auth_ok: !!ok } }];"
+                                     }
+                  },
+                  {
+                      "id":  "ifAuth",
+                      "name":  "Authorized?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       760,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "boolean":  [
+                                                                            {
+                                                                                "value1":  "={{$json.auth_ok}}",
+                                                                                "operation":  "isTrue"
+                                                                            }
+                                                                        ]
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "route",
+                      "name":  "Route Path",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3.2,
+                      "position":  [
+                                       960,
+                                       320
+                                   ],
+                      "parameters":  {
+                                         "mode":  "expression",
+                                         "output":  "={{$json.path}}",
+                                         "rules":  [
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/v1/tasks/research"
+                                                       },
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/status"
+                                                       },
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/v1/reports/latest"
+                                                       },
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/v1/reports/"
+                                                       },
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/v1/agents/threads/"
+                                                       },
+                                                       {
+                                                           "operation":  "contains",
+                                                           "value":  "/v1/agents/threads"
+                                                       }
+                                                   ]
+                                     }
+                  },
+                  {
+                      "id":  "insertTask",
+                      "name":  "Insert Task",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       120
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.tasks(status, queries, competitors, platforms, date_range_start, date_range_end, max_items, language, notify_webhook) VALUES (\u0027queued\u0027, {{$json.body.queries || []}}, {{$json.body.competitors || []}}, {{$json.body.platforms || [\"youtube\"]}}, {{$json.body.date_range.start || null}}, {{$json.body.date_range.end || null}}, {{$json.body.max_items || Number($env.MAX_ITEMS_DEFAULT || 50)}}, {{$json.body.language || \"en\"}}, {{$json.body.notify_webhook || null}}) RETURNING *;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "taskStatus",
+                      "name":  "Get Task Status",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       240
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT t.*, (SELECT count(*) FROM public.social_raw r WHERE r.task_id=t.id) AS raw_items_ingested, (SELECT count(*) FROM public.social_analysis a WHERE a.task_id=t.id) AS analyses_complete, (SELECT count(*)\u003e0 FROM public.reports rp WHERE rp.task_id=t.id AND rp.status=\u0027final\u0027) AS report_ready FROM public.tasks t WHERE t.id={{$json.params.task_id}} LIMIT 1;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "reportByTask",
+                      "name":  "Get Report by Task",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       360
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM public.reports WHERE task_id={{$json.params.task_id}} LIMIT 1;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "reportLatest",
+                      "name":  "Get Latest Report",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       480
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM public.reports ORDER BY created_at DESC LIMIT 1;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "threads",
+                      "name":  "Get Threads",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       600
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM public.agent_threads WHERE ({{$json.query.task_id || null}} IS NULL OR task_id={{$json.query.task_id || null}}) ORDER BY created_at DESC LIMIT 100;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "messages",
+                      "name":  "Get Thread Messages",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1160,
+                                       720
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM public.agent_messages WHERE thread_id={{$json.params.thread_id}} ORDER BY created_at ASC LIMIT 200;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "unauth",
+                      "name":  "Unauthorized Body",
+                      "type":  "n8n-nodes-base.set",
+                      "typeVersion":  3.4,
+                      "position":  [
+                                       960,
+                                       520
+                                   ],
+                      "parameters":  {
+                                         "assignments":  {
+                                                             "assignments":  [
+                                                                                 {
+                                                                                     "id":  "1",
+                                                                                     "name":  "statusCode",
+                                                                                     "type":  "number",
+                                                                                     "value":  401
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "2",
+                                                                                     "name":  "error",
+                                                                                     "type":  "string",
+                                                                                     "value":  "unauthorized"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "3",
+                                                                                     "name":  "message",
+                                                                                     "type":  "string",
+                                                                                     "value":  "Missing or invalid x-api-key"
+                                                                                 }
+                                                                             ]
+                                                         }
+                                     }
+                  },
+                  {
+                      "id":  "respond",
+                      "name":  "Respond",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       1360,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{$json}}",
+                                         "options":  {
+                                                         "responseCode":  "={{$json.statusCode || 200}}"
+                                                     }
+                                     }
+                  }
+              ],
+    "connections":  {
+                        "GET /v1/reports/latest":  {
+                                                       "main":  [
+                                                                    {
+                                                                        "node":  "Merge Webhooks",
+                                                                        "type":  "main",
+                                                                        "index":  3
+                                                                    }
+                                                                ]
+                                                   },
+                        "Authorized?":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Route Path",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ],
+                                                         [
+                                                             {
+                                                                 "node":  "Unauthorized Body",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Unauthorized Body":  {
+                                                  "main":  [
+                                                               {
+                                                                   "node":  "Respond",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                              },
+                        "Route Path":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Insert Task",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Get Task Status",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Get Latest Report",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Get Report by Task",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Get Thread Messages",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ],
+                                                        [
+                                                            {
+                                                                "node":  "Get Threads",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Merge Webhooks":  {
+                                               "main":  [
+                                                            {
+                                                                "node":  "Validate API Key",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                           },
+                        "Get Latest Report":  {
+                                                  "main":  [
+                                                               {
+                                                                   "node":  "Respond",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                              },
+                        "GET /v1/reports/:task_id":  {
+                                                         "main":  [
+                                                                      {
+                                                                          "node":  "Merge Webhooks",
+                                                                          "type":  "main",
+                                                                          "index":  2
+                                                                      }
+                                                                  ]
+                                                     },
+                        "Get Task Status":  {
+                                                "main":  [
+                                                             {
+                                                                 "node":  "Respond",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                            },
+                        "Insert Task":  {
+                                            "main":  [
+                                                         {
+                                                             "node":  "Respond",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                        },
+                        "Validate API Key":  {
+                                                 "main":  [
+                                                              {
+                                                                  "node":  "Authorized?",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                             },
+                        "Get Thread Messages":  {
+                                                    "main":  [
+                                                                 {
+                                                                     "node":  "Respond",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                },
+                        "GET /v1/tasks/:task_id/status":  {
+                                                              "main":  [
+                                                                           {
+                                                                               "node":  "Merge Webhooks",
+                                                                               "type":  "main",
+                                                                               "index":  1
+                                                                           }
+                                                                       ]
+                                                          },
+                        "Get Threads":  {
+                                            "main":  [
+                                                         {
+                                                             "node":  "Respond",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                        },
+                        "GET /v1/agents/threads/:thread_id/messages":  {
+                                                                           "main":  [
+                                                                                        {
+                                                                                            "node":  "Merge Webhooks",
+                                                                                            "type":  "main",
+                                                                                            "index":  5
+                                                                                        }
+                                                                                    ]
+                                                                       },
+                        "Get Report by Task":  {
+                                                   "main":  [
+                                                                {
+                                                                    "node":  "Respond",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                               },
+                        "POST /v1/tasks/research":  {
+                                                        "main":  [
+                                                                     {
+                                                                         "node":  "Merge Webhooks",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                    },
+                        "GET /v1/agents/threads":  {
+                                                       "main":  [
+                                                                    {
+                                                                        "node":  "Merge Webhooks",
+                                                                        "type":  "main",
+                                                                        "index":  4
+                                                                    }
+                                                                ]
+                                                   }
+                    }
+}

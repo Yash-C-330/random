@@ -1,0 +1,622 @@
+﻿{
+    "id":  "wf-synthesis",
+    "name":  "Synthesis \u0026 Insights Agent",
+    "active":  false,
+    "settings":  {
+                     "executionOrder":  "v1"
+                 },
+    "versionId":  "v-wf-synthesis",
+    "pinData":  {
+
+                },
+    "tags":  [
+
+             ],
+    "nodes":  [
+                  {
+                      "id":  "cron",
+                      "name":  "Cron Poll",
+                      "type":  "n8n-nodes-base.cron",
+                      "typeVersion":  1,
+                      "position":  [
+                                       120,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "triggerTimes":  {
+                                                              "item":  [
+                                                                           {
+                                                                               "mode":  "everyMinute"
+                                                                           }
+                                                                       ]
+                                                          }
+                                     }
+                  },
+                  {
+                      "id":  "webhook",
+                      "name":  "Webhook Trigger",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       120,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "path":  "agents/synthesis_insights/trigger",
+                                         "httpMethod":  "POST",
+                                         "responseMode":  "onReceived",
+                                         "responseData":  "allEntries"
+                                     }
+                  },
+                  {
+                      "id":  "merge",
+                      "name":  "Merge Trigger",
+                      "type":  "n8n-nodes-base.merge",
+                      "typeVersion":  3,
+                      "position":  [
+                                       320,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "mode":  "append"
+                                     }
+                  },
+                  {
+                      "id":  "set",
+                      "name":  "Set Config",
+                      "type":  "n8n-nodes-base.set",
+                      "typeVersion":  3.4,
+                      "position":  [
+                                       520,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "assignments":  {
+                                                             "assignments":  [
+                                                                                 {
+                                                                                     "id":  "1",
+                                                                                     "name":  "agent_name",
+                                                                                     "type":  "string",
+                                                                                     "value":  "synthesis_insights"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "2",
+                                                                                     "name":  "system_prompt",
+                                                                                     "type":  "string",
+                                                                                     "value":  "Category strategist. Return JSON summary and markdown sections."
+                                                                                 }
+                                                                             ]
+                                                         },
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "claim",
+                      "name":  "Claim Message",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       920,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE public.agent_messages SET state=\u0027claimed\u0027, attempts=attempts+1, updated_at=now() WHERE id=(SELECT id FROM public.agent_messages WHERE to_agent=\u0027synthesis_insights\u0027 AND state=\u0027queued\u0027 ORDER BY priority DESC, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *;"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "ifClaimed",
+                      "name":  "Message Claimed?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "string":  [
+                                                                           {
+                                                                               "value1":  "={{$json.id}}",
+                                                                               "operation":  "isNotEmpty"
+                                                                           }
+                                                                       ]
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "sanitize",
+                      "name":  "Sanitize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1320,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "const payload = .payload || {};\r\nconst normalize = (v) =\u003e typeof v === \u0027string\u0027 ? v.replace(/\\s+/g, \u0027 \u0027).trim().slice(0, 16000) : v;\r\nconst sanitized = JSON.parse(JSON.stringify(payload, (k, v) =\u003e (v === null ? undefined : normalize(v))));\r\nreturn [{ json: { ..., sanitized } }];"
+                                     }
+                  },
+                  {
+                      "id":  "split",
+                      "name":  "Split In Batches",
+                      "type":  "n8n-nodes-base.splitInBatches",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1520,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "batchSize":  "={{ Number($env.BATCH_SIZE || 10) }}",
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "rateWait",
+                      "name":  "Rate Limit Wait",
+                      "type":  "n8n-nodes-base.wait",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1720,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "amount":  "={{ Number($env.RATE_LIMIT_DELAY_MS || 1200) }}",
+                                         "unit":  "milliseconds"
+                                     }
+                  },
+                  {
+                      "id":  "claude",
+                      "name":  "Claude Analyze",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1920,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.anthropic.com/v1/messages",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-api-key",
+                                                                                         "value":  "={{$env.ANTHROPIC_API_KEY}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "anthropic-version",
+                                                                                         "value":  "2023-06-01"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "content-type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ {\"model\": $env.ANTHROPIC_MODEL || \"claude-3-5-sonnet-latest\", \"max_tokens\": Number($env.ANTHROPIC_MAX_TOKENS || 1600), \"temperature\": Number($env.ANTHROPIC_TEMPERATURE || 0.3), \"top_p\": 0.9, \"system\": $json.system_prompt, \"messages\": [{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\": JSON.stringify($json.sanitized)}]}] } }}",
+                                         "options":  {
+                                                         "timeout":  90000
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "validate",
+                      "name":  "Validate JSON",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2120,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "const txt = .content?.[0]?.text || .body?.content?.[0]?.text || \u0027\u0027;\r\nlet parsed = null;\r\nlet valid = false;\r\nlet reason = \u0027\u0027;\r\ntry {\r\n  parsed = JSON.parse(txt);\r\n  valid = parsed \u0026\u0026 typeof parsed === \u0027object\u0027;\r\n} catch (e) {\r\n  reason = e.message;\r\n}\r\nreturn [{ json: { ..., parsed, valid, validation_reason: reason } }];"
+                                     }
+                  },
+                  {
+                      "id":  "ifValid",
+                      "name":  "Valid JSON?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2320,
+                                       220
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "boolean":  [
+                                                                            {
+                                                                                "value1":  "={{$json.valid}}",
+                                                                                "operation":  "isTrue"
+                                                                            }
+                                                                        ]
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "writeAnalysis",
+                      "name":  "Write Analysis",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2520,
+                                       140
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.social_analysis(task_id, agent, raw_llm_response, topics, creative_type, hook_style, target_audience, emotional_tone, compliance_flags, cta_type, claims_summary, quality_score, reasons, top_quote, hashtags, entities, suggested_counter_angles, brand_safety_risks, language, detected_format) VALUES ({{.task_id}}, \u0027synthesis_insights\u0027, {{.parsed}}, {{.parsed.topics || []}}, {{.parsed.creative_type || null}}, {{.parsed.hook_style || null}}, {{.parsed.target_audience || null}}, {{.parsed.emotional_tone || null}}, {{.parsed.compliance_flags || []}}, {{.parsed.cta_type || null}}, {{.parsed.claims_summary || null}}, {{.parsed.quality_score || null}}, {{.parsed.reasons || null}}, {{.parsed.top_quote || null}}, {{.parsed.hashtags || []}}, {{.parsed.entities || {}}}, {{.parsed.suggested_counter_angles || []}}, {{.parsed.brand_safety_risks || []}}, {{.parsed.language || null}}, {{.parsed.detected_format || null}});"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "writeBlackboard",
+                      "name":  "Write Blackboard",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2720,
+                                       140
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.blackboard(task_id, key, value, producer_agent) VALUES ({{.task_id}}, \u0027synthesis_insights.output\u0027, {{.parsed}}, \u0027synthesis_insights\u0027) ON CONFLICT (task_id, key) DO UPDATE SET value=EXCLUDED.value, producer_agent=EXCLUDED.producer_agent, updated_at=now();"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "postAnswer",
+                      "name":  "Post Answer",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2920,
+                                       140
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.agent_messages(thread_id, task_id, from_agent, to_agent, kind, state, priority, payload) VALUES ({{.thread_id}}, {{.task_id}}, \u0027synthesis_insights\u0027, \u0027coordinator\u0027, \u0027answer\u0027, \u0027queued\u0027, 1, {{.parsed}});"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "markDone",
+                      "name":  "Mark Done",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       3120,
+                                       140
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE public.agent_messages SET state=\u0027done\u0027, updated_at=now() WHERE id={{.id}};"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "repairPrompt",
+                      "name":  "Build Repair Prompt",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2520,
+                                       320
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "const reason = $json.validation_reason || \"invalid_json\"; const prompt = `Return ONLY valid JSON matching schema. Fix: ${reason}`; return [{ json: { ...$json, repair_prompt: prompt } }];"
+                                     }
+                  },
+                  {
+                      "id":  "claudeRepair",
+                      "name":  "Claude Repair",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       2720,
+                                       320
+                                   ],
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.anthropic.com/v1/messages",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-api-key",
+                                                                                         "value":  "={{$env.ANTHROPIC_API_KEY}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "anthropic-version",
+                                                                                         "value":  "2023-06-01"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "content-type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ {\"model\": $env.ANTHROPIC_MODEL || \"claude-3-5-sonnet-latest\", \"max_tokens\": 800, \"temperature\": 0.2, \"top_p\": 0.9, \"system\": \"Repair malformed JSON and return JSON only\", \"messages\": [{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\": $json.repair_prompt}]}] } }}"
+                                     }
+                  },
+                  {
+                      "id":  "retryWait",
+                      "name":  "Retry Wait",
+                      "type":  "n8n-nodes-base.wait",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       2920,
+                                       320
+                                   ],
+                      "parameters":  {
+                                         "amount":  "={{ Math.floor(Math.random() * Number($env.MESSAGE_RETRY_JITTER_MS || 2000)) + 1000 }}",
+                                         "unit":  "milliseconds"
+                                     }
+                  },
+                  {
+                      "id":  "markFailed",
+                      "name":  "Mark Failed/Requeue",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       3120,
+                                       320
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE public.agent_messages SET state=CASE WHEN attempts\u003e=3 THEN \u0027failed\u0027 ELSE \u0027queued\u0027 END, error=\u0027json_validation_failed\u0027, updated_at=now() WHERE id={{.id}};"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  },
+                  {
+                      "id":  "logIdle",
+                      "name":  "Log Idle",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1320,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO public.logs(level, agent, message, meta) VALUES (\u0027debug\u0027, \u0027synthesis_insights\u0027, \u0027no queued message\u0027, \u0027{\"state\":\"idle\"}\u0027::jsonb);"
+                                     },
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "supabase-postgres",
+                                                           "name":  "Supabase Postgres"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Post Answer":  {
+                                            "main":  [
+                                                         {
+                                                             "node":  "Mark Done",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                        },
+                        "Split In Batches":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Rate Limit Wait",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ],
+                                                              [
+
+                                                              ]
+                                                          ]
+                                             },
+                        "Build Repair Prompt":  {
+                                                    "main":  [
+                                                                 {
+                                                                     "node":  "Claude Repair",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                },
+                        "Retry Wait":  {
+                                           "main":  [
+                                                        {
+                                                            "node":  "Mark Failed/Requeue",
+                                                            "type":  "main",
+                                                            "index":  0
+                                                        }
+                                                    ]
+                                       },
+                        "Valid JSON?":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Write Analysis",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ],
+                                                         [
+                                                             {
+                                                                 "node":  "Build Repair Prompt",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Merge Trigger":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Set Config",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Write Blackboard":  {
+                                                 "main":  [
+                                                              {
+                                                                  "node":  "Post Answer",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                             },
+                        "Validate JSON":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Valid JSON?",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Message Claimed?":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Sanitize Input",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ],
+                                                              [
+                                                                  {
+                                                                      "node":  "Log Idle",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Cron Poll":  {
+                                          "main":  [
+                                                       {
+                                                           "node":  "Merge Trigger",
+                                                           "type":  "main",
+                                                           "index":  0
+                                                       }
+                                                   ]
+                                      },
+                        "Webhook Trigger":  {
+                                                "main":  [
+                                                             {
+                                                                 "node":  "Merge Trigger",
+                                                                 "type":  "main",
+                                                                 "index":  1
+                                                             }
+                                                         ]
+                                            },
+                        "Rate Limit Wait":  {
+                                                "main":  [
+                                                             {
+                                                                 "node":  "Claude Analyze",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                            },
+                        "Claim Message":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Message Claimed?",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Set Config":  {
+                                           "main":  [
+                                                        {
+                                                            "node":  "Claim Message",
+                                                            "type":  "main",
+                                                            "index":  0
+                                                        }
+                                                    ]
+                                       },
+                        "Claude Repair":  {
+                                              "main":  [
+                                                           {
+                                                               "node":  "Retry Wait",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                          },
+                        "Write Analysis":  {
+                                               "main":  [
+                                                            {
+                                                                "node":  "Write Blackboard",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                           },
+                        "Claude Analyze":  {
+                                               "main":  [
+                                                            {
+                                                                "node":  "Validate JSON",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                           },
+                        "Sanitize Input":  {
+                                               "main":  [
+                                                            {
+                                                                "node":  "Split In Batches",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                           }
+                    }
+}
