@@ -1,0 +1,488 @@
+# Architecture: AI Property Manager Autopilot
+
+---
+
+## 1. System Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  FRONTEND (Next.js)                     │
+│   Landlord Dashboard | Tenant Portal | Reports          │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│                AUTH & BILLING                           │
+│           Clerk (Auth)  |  Stripe (Billing)             │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│               BACKEND API (FastAPI / Hono)              │
+│         REST Endpoints  |  Webhook Receiver             │
+└──────────┬────────────────────────────┬─────────────────┘
+           │                            │
+┌──────────▼──────────┐    ┌────────────▼────────────────┐
+│    DATA LAYER       │    │   n8n AUTOMATION ENGINE     │
+│  PostgreSQL (Neon)  │    │   (self-hosted on Railway)  │
+│  Redis (Upstash)    │    │   6 Core Workflows          │
+│  S3 / R2 (files)   │    └────────────┬────────────────┘
+└─────────────────────┘                │
+                            ┌──────────▼──────────────────┐
+                            │     INTEGRATIONS            │
+                            │ Twilio | Resend | OpenAI    │
+                            │ DocuSign | Stripe | QB      │
+                            │ Checkr | Plaid | Playwright │
+                            └─────────────────────────────┘
+```
+
+---
+
+## 2. Tech Stack
+
+| Layer | Tool | Purpose | Monthly Cost |
+|---|---|---|---|
+| Frontend | **Next.js 15** (App Router) | UI, SSR, API routes | Free (Vercel hobby) |
+| Styling | **Tailwind CSS + shadcn/ui** | Component library | Free |
+| Auth | **Clerk** | Login, SSO, org management | Free up to 10k MAU |
+| Database | **PostgreSQL via Supabase/Neon** | All persistent data | Free–$25 |
+| Cache/Queue | **Redis via Upstash** | Sessions, rate limits, queues | Free–$10 |
+| File Storage | **Cloudflare R2** | Leases, reports, photos | ~$5 |
+| Automation | **n8n** (self-hosted, Railway) | All workflow automation | ~$20 |
+| Email | **Resend** | Transactional emails | Free–$20 |
+| SMS | **Twilio** | Rent reminders, alerts | ~$0.01/msg |
+| AI | **OpenAI GPT-4o mini** | Drafting, classification, scoring | ~$0.15/1M tokens |
+| E-Signatures | **DocuSign** | Lease signing | $25/month |
+| Payments | **Stripe** | Rent collection + SaaS billing | 2.9% + $0.30 |
+| Background Checks | **Checkr** | Tenant screening | Pay per check |
+| Income Verify | **Plaid** | Bank-linked income verification | Pay per check |
+| Accounting | **QuickBooks API** | Expense logging, reconciliation | Client's account |
+| **Total infra** | | | **~$100–150/mo** |
+
+> Break even at just **1–2 paying customers.**
+
+---
+
+## 3. Database Schema
+
+```sql
+-- Landlords (SaaS customers)
+CREATE TABLE landlords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    stripe_customer_id TEXT,
+    plan TEXT DEFAULT 'starter',  -- starter | growth | pro | enterprise
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Properties
+CREATE TABLE properties (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    landlord_id UUID REFERENCES landlords(id) ON DELETE CASCADE,
+    address TEXT NOT NULL,
+    city TEXT,
+    state TEXT,
+    zip TEXT,
+    units_count INT DEFAULT 1,
+    type TEXT  -- single_family | multi_family | commercial
+);
+
+-- Individual units within a property
+CREATE TABLE units (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    property_id UUID REFERENCES properties(id) ON DELETE CASCADE,
+    unit_number TEXT,
+    bedrooms INT,
+    bathrooms NUMERIC(3,1),
+    rent_amount DECIMAL(10,2),
+    status TEXT DEFAULT 'vacant'  -- vacant | occupied | maintenance
+);
+
+-- Tenants
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    credit_score INT,
+    annual_income DECIMAL(12,2),
+    status TEXT DEFAULT 'applicant'  -- applicant | active | past
+);
+
+-- Leases
+CREATE TABLE leases (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    unit_id UUID REFERENCES units(id),
+    tenant_id UUID REFERENCES tenants(id),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    monthly_rent DECIMAL(10,2) NOT NULL,
+    security_deposit DECIMAL(10,2),
+    docusign_envelope_id TEXT,
+    status TEXT DEFAULT 'pending'  -- pending | active | expired | terminated
+);
+
+-- Rent payments
+CREATE TABLE rent_payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lease_id UUID REFERENCES leases(id),
+    due_date DATE NOT NULL,
+    paid_date DATE,
+    amount DECIMAL(10,2) NOT NULL,
+    stripe_payment_id TEXT,
+    status TEXT DEFAULT 'pending'  -- pending | paid | late | failed
+);
+
+-- Maintenance tickets
+CREATE TABLE maintenance_tickets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    unit_id UUID REFERENCES units(id),
+    tenant_id UUID REFERENCES tenants(id),
+    category TEXT,      -- plumbing | electrical | hvac | appliance | cosmetic
+    urgency TEXT,       -- emergency | high | normal | low
+    description TEXT,
+    vendor_id TEXT,
+    estimated_cost DECIMAL(10,2),
+    actual_cost DECIMAL(10,2),
+    status TEXT DEFAULT 'open',  -- open | assigned | in_progress | resolved
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Automation run log
+CREATE TABLE automation_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    landlord_id UUID REFERENCES landlords(id),
+    workflow_name TEXT,
+    trigger TEXT,
+    outcome TEXT,       -- success | failed | skipped
+    details JSONB,
+    ran_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+---
+
+## 4. Core n8n Workflows
+
+### Overview
+
+| # | Workflow | Trigger Type | Key Integrations |
+|---|---|---|---|
+| 1 | Rent Reminder Sequences | Daily cron | Twilio, Resend, OpenAI |
+| 2 | Maintenance Request Router | Webhook (form/SMS) | OpenAI (classify), Twilio |
+| 3 | Lease Renewal Campaign | Daily cron (90/60/30 days) | OpenAI, DocuSign, Resend |
+| 4 | Monthly Owner Reports | Monthly cron (1st @ 6am) | OpenAI, QuickBooks, S3, PDF |
+| 5 | Tenant Screening Pipeline | Webhook (application form) | Checkr, Plaid, OpenAI, DocuSign |
+| 6 | AI Tenant Response Bot | Inbound SMS/email | OpenAI, Twilio |
+
+---
+
+### Workflow 1 — Rent Reminder Sequences
+
+```
+Cron: daily 8am
+  → Query DB: leases with rent_due in 7, 3, 1 days OR overdue 1, 3, 7+ days
+  → For each lease:
+      IF due in 7 days  → send friendly email + SMS
+      IF due in 3 days  → send reminder SMS ("3 days left")
+      IF due in 1 day   → send urgent SMS ("due tomorrow")
+      IF overdue 1 day  → OpenAI drafts firm-but-professional reminder → send
+      IF overdue 3 days → notify landlord via Slack/email + log incident
+      IF overdue 7 days → OpenAI generates legal notice template → alert landlord
+  → Log all events to automation_logs
+```
+
+---
+
+### Workflow 2 — Maintenance Request Router
+
+```
+Webhook: tenant submits form (or texts in)
+  → n8n receives payload
+  → OpenAI classifies: { category, urgency, estimated_cost, summary }
+  → Create ticket in DB (status: open)
+  → Send confirmation SMS to tenant ("We received your request")
+  
+  IF urgency = "emergency"
+    → Immediately SMS + call landlord via Twilio
+    → Page on-call vendor from vendor list in DB
+    
+  IF urgency = "high"
+    → Notify landlord within 1 hour
+    → Auto-assign preferred vendor for that category
+    
+  IF urgency = "normal"
+    → Add to daily digest for landlord
+  
+  → When vendor marks job complete:
+    → Send satisfaction survey to tenant
+    → Log cost to QuickBooks
+    → Update maintenance history
+```
+
+---
+
+### Workflow 3 — Lease Renewal Campaign
+
+```
+Cron: daily check all active leases
+  → IF lease expires in 90 days:
+      → OpenAI drafts personalized renewal offer (based on market rents)
+      → Email + SMS tenant with renewal PDF attachment
+      
+  → IF lease expires in 60 days (no response):
+      → Send follow-up: "Have you decided?" + renewal incentive
+      
+  → IF lease expires in 30 days:
+      → Final notice: decision required or vacate notice triggered
+      
+  → IF tenant confirms renewal:
+      → Generate new lease from DocuSign template
+      → Send for e-signature
+      → Track signing status (reminder if not signed in 48h)
+      → On signed: update DB + notify landlord + log to QuickBooks
+      
+  → IF tenant confirms vacate:
+      → Trigger move-out checklist
+      → Schedule inspection
+      → Auto-post vacancy to Zillow, Facebook, Craigslist
+```
+
+---
+
+### Workflow 4 — Monthly Owner Report Generator
+
+```
+Cron: 1st of every month at 6am
+  → Pull all Stripe transactions for previous month (rent received)
+  → Pull maintenance costs from DB + QuickBooks
+  → Pull occupancy data (vacant days, turnover rate)
+  
+  → OpenAI generates:
+      - Executive summary (2-3 sentences)
+      - Cash flow narrative
+      - Action items for next month
+      
+  → Generate PDF report containing:
+      - Income statement (rent collected vs. expected)
+      - Expense breakdown (maintenance, fees)
+      - Net Operating Income (NOI)
+      - Occupancy rate
+      - Maintenance log summary
+      
+  → Upload PDF to S3
+  → Email landlord with AI-written summary + PDF link
+  → Push KPIs to dashboard (update Postgres)
+  
+  → Check anomalies:
+      IF rent revenue down >10% → alert: "Possible vacancy risk"
+      IF maintenance costs up >20% → alert: "High maintenance — consider inspection"
+  
+  → Archive report in S3 (7-year retention)
+```
+
+---
+
+### Workflow 5 — Tenant Screening Pipeline
+
+```
+Webhook: tenant submits rental application
+  → Store applicant in DB (status: received)
+  → Auto-reply SMS + Email: "Application received, review in 24-48h"
+  
+  → Trigger Checkr API (background + credit check)
+  → Trigger Plaid (income verification via bank link or pay stub upload)
+  
+  → Once results back:
+    → OpenAI scores application:
+        - Income-to-rent ratio (ideal: 3x rent)
+        - Credit score band
+        - Rental history flags
+        - Employment stability
+        → Returns: { score: 0-100, recommendation, red_flags[] }
+  
+  → IF score >= 80: auto-send approval + DocuSign lease
+  → IF score 50–79: notify landlord with AI summary + recommendation
+  → IF score < 50: send polite legally-compliant denial email
+  
+  → On landlord approval:
+    → Send DocuSign lease
+    → Collect security deposit (Stripe)
+    → Send move-in checklist + inspection scheduling link
+```
+
+---
+
+### Workflow 6 — AI Tenant Response Bot
+
+```
+Trigger: inbound SMS to Twilio number OR email to support inbox
+  → OpenAI classifies intent:
+      - maintenance_request → route to Workflow 2
+      - rent_question → look up payment status → auto-reply
+      - lease_question → look up lease details → auto-reply
+      - general_inquiry → OpenAI drafts response from knowledge base
+      - escalation_needed → forward to landlord immediately
+      
+  → Send AI-drafted reply via SMS/email
+  → Log conversation to DB
+  → Tag any unresolved items for landlord review
+```
+
+---
+
+## 5. Deployment Architecture
+
+```
+                    ┌──────────────────┐
+                    │   Vercel         │
+                    │   (Next.js app)  │
+                    └────────┬─────────┘
+                             │ HTTPS
+                    ┌────────▼─────────┐
+                    │   Railway        │
+                    │   ┌───────────┐  │
+                    │   │  FastAPI  │  │
+                    │   │  or Hono  │  │
+                    │   └─────┬─────┘  │
+                    │         │        │
+                    │   ┌─────▼─────┐  │
+                    │   │   n8n     │  │
+                    │   │ (Docker)  │  │
+                    │   └───────────┘  │
+                    └────────┬─────────┘
+                             │
+           ┌─────────────────┼──────────────────┐
+           │                 │                  │
+  ┌────────▼───────┐ ┌───────▼───────┐ ┌────────▼───────┐
+  │  Supabase/Neon │ │ Upstash Redis │ │ Cloudflare R2  │
+  │  (PostgreSQL)  │ │   (cache)     │ │  (file store)  │
+  └────────────────┘ └───────────────┘ └────────────────┘
+```
+
+### Environment Variables
+
+```env
+# App
+NEXT_PUBLIC_APP_URL=https://your-app.vercel.app
+
+# Auth
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
+CLERK_SECRET_KEY=sk_...
+
+# Database
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://...
+
+# Storage
+CLOUDFLARE_R2_BUCKET=...
+CLOUDFLARE_R2_ACCESS_KEY=...
+CLOUDFLARE_R2_SECRET_KEY=...
+
+# n8n
+N8N_WEBHOOK_URL=https://n8n.your-domain.com
+N8N_API_KEY=...
+
+# Communications
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+1...
+RESEND_API_KEY=re_...
+
+# AI
+OPENAI_API_KEY=sk-...
+
+# Payments & Billing
+STRIPE_SECRET_KEY=sk_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# Integrations
+DOCUSIGN_INTEGRATION_KEY=...
+DOCUSIGN_ACCOUNT_ID=...
+CHECKR_API_KEY=...
+PLAID_CLIENT_ID=...
+PLAID_SECRET=...
+QUICKBOOKS_CLIENT_ID=...
+QUICKBOOKS_CLIENT_SECRET=...
+```
+
+---
+
+## 6. Frontend Pages & Routes
+
+```
+app/
+├── (auth)/
+│   ├── sign-in/          → Clerk sign-in
+│   └── sign-up/          → Clerk sign-up + plan selection
+│
+├── (dashboard)/
+│   ├── dashboard/        → Overview: units, rent status, open tickets
+│   ├── properties/       → Property + unit management
+│   ├── tenants/          → Tenant list, profiles, history
+│   ├── leases/           → Active/expired leases, renewals
+│   ├── payments/         → Rent payment history, overdue alerts
+│   ├── maintenance/      → Ticket list, vendor assignment
+│   ├── automations/      → Toggle/view running workflows
+│   └── reports/          → Monthly reports, download PDFs
+│
+├── (tenant)/
+│   ├── apply/[unitId]    → Public tenant application form
+│   ├── maintenance/new   → Public maintenance request form
+│   └── pay/[leaseId]     → Stripe rent payment portal
+│
+└── api/
+    ├── webhooks/stripe/  → Stripe payment webhooks
+    ├── webhooks/n8n/     → n8n callback webhooks
+    ├── webhooks/docusign/→ DocuSign signing status
+    ├── properties/       → CRUD endpoints
+    ├── tenants/          → CRUD endpoints
+    ├── leases/           → CRUD endpoints
+    └── maintenance/      → CRUD endpoints
+```
+
+---
+
+## 7. MVP Build Timeline (10 Weeks)
+
+| Week | Focus | Deliverable |
+|---|---|---|
+| 1–2 | Foundation | Next.js + Supabase + Clerk + DB schema |
+| 3–4 | Core automations | n8n setup + Workflow 1 (rent reminders) + Workflow 2 (maintenance) |
+| 5–6 | More workflows | Workflow 3 (lease renewal) + Workflow 4 (monthly reports) + DocuSign + Stripe |
+| 7–8 | Dashboard | Landlord dashboard UI + Tenant portal forms + Workflow 5 (screening) |
+| 9–10 | Launch prep | Stripe billing tiers + onboarding wizard + testing + bug fixes |
+| **Week 10** | **Launch** | **First 10 paying customers** |
+
+---
+
+## 8. Pricing Tiers
+
+| Plan | Price | Unit Limit | Key Features |
+|---|---|---|---|
+| **Starter** | $49/month | 5 units | Rent reminders, maintenance tickets, basic reports |
+| **Growth** | $149/month | 25 units | + Lease renewals, tenant screening, AI response bot |
+| **Pro** | $349/month | 100 units | + Monthly owner reports, QuickBooks sync, DocuSign |
+| **Enterprise** | Custom | Unlimited | + White-label, custom workflows, dedicated support |
+
+---
+
+## 9. Go-To-Market Channels
+
+1. **Beta launch** — Post in r/realestateinvesting, r/landlord, BiggerPockets — offer 3 months free
+2. **Direct outreach** — DM 200 landlords in Facebook Groups ("Independent Landlords", "Small Landlord Nation")
+3. **YouTube partnership** — Demo with 1 real estate investor channel (Month 2)
+4. **SEO content** — "automate rent reminders", "property manager software small landlords", "n8n real estate" (Month 3)
+5. **Workflow marketplace** — Sell individual n8n workflows ($29 one-time) as top-of-funnel (Month 4+)
+6. **Brokerage white-label** — Partner with property management associations for bulk deals
+
+---
+
+## 10. Absolute Minimum MVP (2 Weeks to Sell)
+
+Just these 3 things are enough to charge for:
+
+1. **A form** for tenants to submit maintenance requests
+2. **n8n workflow** that classifies the request (AI) + notifies the landlord via SMS
+3. **A Stripe subscription page** to collect $49/month
+
+Everything else is iteratively layered on top after you have paying customers.
